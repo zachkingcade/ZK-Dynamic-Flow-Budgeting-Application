@@ -54,7 +54,7 @@ Owner-locked decisions for Issue #2:
 | D6 | Driving model | **Event-driven** — no real-time wall-clock scheduler / cron as the primary automatic-funding trigger | PROPOSED → accept with this file |
 | D7 | Tenancy | Software + DB support **many accounts/users**; **≤1 user per account**; each user may have **many budgets** | PROPOSED → accept with this file |
 | D8 | Hosting | **Public host from the start** via Docker Compose (+ reverse proxy) | PROPOSED → accept with this file |
-| D9 | Auth | **Designed later** — placeholder only in v1 architecture | DEFERRED |
+| D9 | Auth | **Designed in [`AUTH.md`](./AUTH.md)** (local + Authentik; no merge) — was deferred from Issue #2 | See AUTH.md status |
 | D10 | Module enforcement | **Convention-only** for now (no import-lint / ArchUnit required yet) | PROPOSED → accept with this file |
 
 ### Axes (do not conflate)

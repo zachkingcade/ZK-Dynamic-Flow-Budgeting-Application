@@ -4,8 +4,8 @@
 |-------|-------|
 | **Status** | **Accepted** — owner-approved baseline for Budget 2.0 business rules |
 | **Source issue** | [#1 — Decide and document the basic accounting business rules](https://github.com/zachkingcade/ZK-Dynamic-Flow-Budgeting-Application/issues/1) |
-| **Last updated** | 2026-10-15 |
-| **Scope** | Domain / allocation accounting rules for v1 (not UI, stack, or bank sync) |
+| **Last updated** | 2026-10-21 |
+| **Scope** | Domain / allocation accounting rules for v1 (not UI layout, stack, or bank sync) |
 
 ### Status legend
 
@@ -62,8 +62,8 @@ This product allocates **one budget cash pool** across a **directed funding grap
 | **Priority** | Non-negative integer per parent edge. **Lower number = higher priority.** **0** is the highest possible priority; users may start at 0 or any higher non-negative integer. Negatives are not allowed. |
 | **Allow deficit** | Per-node option (pool or spending): after automatic funding has gone as far as funders/max allow, if still short → post and let Available go negative; if off → **reject the entire transaction** (nothing moves). |
 | **Reclaim** | User-initiated upward pull of Available from descendants along the graph. Modes: **full reclaim** or **reclaim to combined baselines**. If nothing is reclaimable, the operation succeeds and reports **$0 reclaimed**. |
-| **Period** | User-defined cadence (**every X of unit Y starting on date Z**) that stays **open until the user closes it**. While open, only transactions whose **transaction date** falls in that period may be entered. Period boundaries are interpreted in the budget’s **timezone**. |
-| **Timezone** | IANA timezone chosen at account/budget setup; **defaults to UTC** if unchanged. Used for period boundaries and interpreting transaction/system datetimes. |
+| **Period** | User-defined cadence (**every X of unit Y starting on date Z**) that stays **open until the user closes it**. Closing does **not** open the next period automatically. While open, only transactions whose **transaction date** falls in that period may be entered. Period boundaries are interpreted in the account **timezone**. |
+| **Timezone** | IANA timezone chosen at **account setup**; **defaults to UTC** if unchanged. Used for period boundaries and interpreting transaction/system datetimes for all budgets under the account. |
 | **Transaction date** | Real-world date the money movement happened (in the budget timezone unless later design says otherwise). |
 | **System date** | Date/time the transaction was entered into the system (may be after the period’s calendar end, while the period is still open). |
 | **Reject** | Atomic failure: no balance/ledger change for the transaction and its funding legs. |
@@ -84,8 +84,9 @@ This product allocates **one budget cash pool** across a **directed funding grap
 4. **Soft overflow within hard max.** Example: water baseline $50/period may automatically pull to $60 if max is $100; attempts that cannot fully cover without Allow deficit → reject.
 5. **Target for spending nodes.** Reporting over/under an expected target while pulls/spend obey max and deficit rules.
 6. **Target vs hard max.** If a hard max is set, **target cannot be greater than max** (`target ≤ max`). Setting a new max **below** the current target is **rejected**; tell the user to **lower the target first**.
-7. **Allocation-only v1.** No real-world account tracking in the first version.
-8. **User chooses names and transaction acceptance.** Users name nodes and choose pool vs spending. Starter presets are deferred.
+7. **Allocation-only v1.** No real-world bank account tracking in the first version. Bulk CSV import of external transactions (column-mapped, no bank/source identity) is allowed as a product feature; it is not bank sync or reconciliation.
+8. **User chooses names and transaction acceptance.** Users name nodes and choose pool vs spending. Starter node presets are deferred.
+8a. **Primary budget on account creation.** Creating an account creates one **primary budget** automatically. The user may add more budgets later; each budget is its own economic pool (no cross-budget cash sharing in v1).
 9. **Manual moves:** any node → any other node; audited double-entry; zero-sum; **no edge required**; **do not affect** hard max / period funded-in; warn if amount would exceed what automatic max would have allowed.
 10. **Document before building.** Rules are decided and written here before implementation on ambiguous terms.
 
@@ -111,9 +112,11 @@ This product allocates **one budget cash pool** across a **directed funding grap
     2. At **transaction time**, if current Available does not cover the transaction about to post.
 21. **Upward reclaim:** user-initiated only; recursive over children; **full reclaim** or **reclaim to combined baselines** (sum of per-edge baselines). If nothing to reclaim, succeed with **$0 reclaimed**.
 22. **Period definition:** user sets **every X of unit Y starting on Z** (example: every two weeks starting 2026-10-16).
-23. **Period lifecycle:** a period remains **open until the user closes it**. After the calendar end, the user may still enter transactions for that period (system date may be later). They may **not** enter a transaction whose **transaction date** falls outside the open period. Example: period ends 10/15; on 10/16 the user may still add a transaction dated 10/15; they cannot add one dated 10/17 until that period is closed and a period that includes 10/17 is current/open.
+22a. **Cadence changes:** period size/cadence may be changed **only when no period is open** (including after close and before the first open). Mid-period cadence changes are **rejected**. Closed periods remain immutable; only future opens use the new X/Y/Z.
+23. **Period lifecycle:** a period remains **open until the user closes it**. **Closing does not automatically open the next period** — the user must explicitly open a period. After close and until the next open, **no** external transactions may be posted. After the calendar end of an still-open period, the user may still enter transactions for that period (system date may be later). They may **not** enter a transaction whose **transaction date** falls outside the open period. Example: period ends 10/15; on 10/16 the user may still add a transaction dated 10/15; they cannot add one dated 10/17 until that period is closed and a period that includes 10/17 is current/open.
 24. **Transaction dates:** every transaction has at least **transaction date** (real world) and **system date** (entry time). More date fields may appear in later data-model design.
-25. **Timezone:** at account/budget setup the user is asked for their timezone; it **defaults to UTC**. Period open/close boundaries and date interpretation use this timezone.
+25. **Timezone:** at **account setup** the user is asked for their timezone; it **defaults to UTC**. Period open/close boundaries and date interpretation use this timezone for all budgets under the account.
+25a. **External vs internal visibility:** external income/expense (pool cash in/out) and internal zero-sum funding (automatic funding, manual moves, reclaim) must remain distinguishable in product history/audit. (“Every X periods” auto-fund counts **opened** periods, not calendar gaps while closed.)
 
 ### ACCEPTED — Financial integrity
 
@@ -211,8 +214,9 @@ After every **successful** posting:
 7. Nodes with Allow deficit false never successfully post an uncovered amount.
 8. Nodes with Allow deficit true may go negative only after automatic funding stops at empty up-chain capacity or hard max.
 9. Multi-parent automatic pulls never double-commit the same parent dollar; exhausted parents cause renormalize/continue among remaining.
-10. While a period is open, accepted external transactions must have a **transaction date** inside that period.
-11. Audit trail can answer: why rejected, who changed max/target, which edges funded a pull, manual any-to-any moves, whether deficit was used, $0 reclaim results.
+10. While a period is open, accepted external transactions must have a **transaction date** inside that period. While **no** period is open, external transactions are rejected.
+11. Audit trail can answer: why rejected, who changed max/target, which edges funded a pull, manual any-to-any moves, whether deficit was used, $0 reclaim results; external in/out vs internal zero-sum movements remain distinguishable.
+12. Cadence is not changed while a period is open; close does not auto-open the next period.
 
 ---
 
@@ -271,9 +275,11 @@ User-only; recursive; full or to combined baselines. Below baseline / negative /
 
 ### Period and transaction dating
 
-- Cadence: every **X** of unit **Y** starting on **Z**, evaluated in the budget **timezone**.
-- **Timezone** is collected at account/budget setup and **defaults to UTC**.
-- Remains **open until user closes** it.
+- Cadence: every **X** of unit **Y** starting on **Z**, evaluated in the account **timezone**.
+- **Timezone** is collected at **account setup** and **defaults to UTC**.
+- Remains **open until user closes** it; **close does not auto-open** the next period.
+- Cadence may change only when **no period is open**; mid-period changes rejected; closed periods immutable.
+- While no period is open, external posts are rejected.
 - Entry allowed after calendar end only for transactions whose **transaction date** is still inside the open period.
 - Cannot enter a transaction date outside the open period until a covering period is open.
 - Each transaction has at least **transaction date** and **system date**.
@@ -351,7 +357,10 @@ Assumptions: baseline **$50**/period (combined from per-edge baselines); hard ma
 |------|-------|------|------|
 | P1 | Period open through **10/15**; today system date **10/16**; period not closed | Enter expense with transaction date **10/15** | Allowed |
 | P2 | Same open period | Enter expense with transaction date **10/17** | **Rejected** until a period covering 10/17 is open |
-| P3 | User closes period; new period includes 10/17 | Enter expense dated **10/17** | Allowed; system date is entry time |
+| P3 | User closes period; new period includes 10/17 is **opened** by user | Enter expense dated **10/17** | Allowed only after explicit open; system date is entry time |
+| P4 | User closes period | — | Next period is **not** auto-opened; external posts reject until user opens a period |
+| P5 | Period open; user attempts cadence change | Change X/Y/Z | **Rejected** (mid-period); must close first |
+| P6 | No open period; user changes cadence then opens | Open period | New boundaries use updated cadence; prior closed periods unchanged |
 
 ### Scenario X — Integrity
 
@@ -405,6 +414,7 @@ Ready for owner acceptance when:
 | 2026-10-14 | Allocation-only v1; pool vs spending; `{Name} Expense`; automatic funding rules; Allow deficit; multi-parent graph; Root income default + override; per-period max; period X/Y/Z; recurse shortfall; user reclaim; forbid cycles | ACCEPTED | Owner feedback + team terminology |
 | 2026-10-15 | Manual any-to-any moves (no edge); priority lower=higher (0 highest, no negatives); proportions as parts with renormalize; remove levels; max auto-only; per-edge baselines; atomic multi-parent reject; deficit on pool+spending; user-closed periods + dual transaction dates; $0 reclaim; target ≤ max config rule; §9 approved | ACCEPTED | Owner correction round |
 | 2026-10-15 | Timezone asked at account setup; default **UTC**; document marked Accepted | ACCEPTED | Owner final approval (issue close by owner) |
+| 2026-10-21 | Primary budget auto-created on account creation; close does not auto-open next period; cadence change only when no period open; timezone account-setup only (all budgets); external vs internal history distinguishable; CSV bulk import allowed without bank tracking | ACCEPTED amendment | Owner Issue #3 UI/product clarifications (Accountant: PASS) |
 
 ---
 
